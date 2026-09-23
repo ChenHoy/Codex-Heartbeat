@@ -64,16 +64,24 @@ struct SupervisorSpec: Codable {
     let endpoint: String
 }
 
+func passthrough(to codex: URL, arguments: [String]) -> Never {
+    let strings = ([codex.path] + arguments).map { strdup($0)! }
+    var argv: [UnsafeMutablePointer<CChar>?] = strings.map { $0 } + [nil]
+    execv(codex.path, &argv)
+    fail("Cannot execute Codex CLI: \(String(cString: strerror(errno)))")
+}
+
 func launch() throws -> Int32 {
     var args = Array(CommandLine.arguments.dropFirst())
-    if args == ["--help"] || args == ["-h"] {
+    if args == ["--heartbeat-help"] {
         print("""
-        Usage: codex-heartbeat [--name NAME] [--cd DIR] [-- --model MODEL --no-alt-screen "PROMPT"]
+        Usage: codex-heartbeat [--heartbeat-name NAME] [Codex CLI arguments]
                codex-heartbeat --list
                codex-heartbeat --prune
 
-        Starts a dedicated loopback App Server and the normal interactive Codex TUI.
-        Uses your existing codex login. No API key is required.
+        Interactive codex, resume, and fork use a dedicated loopback App Server.
+        All other Codex commands pass through unchanged and are not monitored.
+        Codex --help and --version pass through unchanged. Uses your existing login.
         Keep Warm is opt-in per session in the menu app. Heartbeats are real
         Codex turns, consume allowance, and use a best-effort no-tools prompt.
         """)
@@ -88,25 +96,24 @@ func launch() throws -> Int32 {
         return 0
     }
     var name: String?
-    var directory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-    while !args.isEmpty && args[0] != "--" {
-        let flag = args.removeFirst()
-        guard ["--name", "--cd"].contains(flag), !args.isEmpty else {
-            throw HeartbeatError.message("Unknown option. Use --help; put supported Codex arguments after --.")
-        }
-        let value = args.removeFirst()
-        if flag == "--name" { name = value }
-        else { directory = URL(fileURLWithPath: value, relativeTo: directory).standardizedFileURL }
+    if args.first == "--heartbeat-name" || args.first == "--name" {
+        guard args.count > 1 else { throw HeartbeatError.message("--heartbeat-name requires a value") }
+        name = args[1]
+        args.removeFirst(2)
+        // Retain the original wrapper's `--name NAME -- <flags>` spelling.
+        if args.first == "--" { args.removeFirst() }
     }
-    if args.first == "--" { args.removeFirst() }
+    let codex = try LaunchPlan.findCodex()
+    let invocation = CLIInvocation(arguments: args, workingDirectory: URL(fileURLWithPath: FileManager.default.currentDirectoryPath))
+    if invocation.route == .passthrough { passthrough(to: codex, arguments: args) }
     guard isatty(STDIN_FILENO) == 1, isatty(STDOUT_FILENO) == 1 else {
         throw HeartbeatError.message("Run this command in an interactive terminal (a TTY is required)")
     }
+    let directory = invocation.workingDirectory
     var isDirectory: ObjCBool = false
     guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory), isDirectory.boolValue else {
         throw HeartbeatError.message("Working directory does not exist")
     }
-    let codex = try LaunchPlan.findCodex()
     let port = hb_free_port()
     guard port >= 1024 else { throw HeartbeatError.message("Cannot allocate loopback port") }
     let plan = try LaunchPlan(executable: codex, workingDirectory: directory, port: UInt16(port), name: name, arguments: args)

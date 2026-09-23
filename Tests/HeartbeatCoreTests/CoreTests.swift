@@ -114,14 +114,41 @@ final class CoreTests: XCTestCase {
         let prompt = "Say 'hello'; `touch NEVER` $(env)"
         let plan = try LaunchPlan(executable: URL(fileURLWithPath: "/usr/bin/codex"), workingDirectory: cwd,
                                   port: 9001, name: "a; b", arguments: ["--model", "some-model", prompt])
-        XCTAssertEqual(plan.cliArguments, ["--remote", "ws://127.0.0.1:9001", "--cd", cwd.resolvingSymlinksInPath().path, "--model", "some-model", prompt])
+        XCTAssertEqual(plan.cliArguments, ["--remote", "ws://127.0.0.1:9001", "--model", "some-model", prompt])
         XCTAssertFalse(plan.serverArguments.contains("sh"))
         XCTAssertEqual(plan.serverArguments.prefix(3), ["app-server", "--listen", "ws://127.0.0.1:9001"])
     }
-    func testRedirectAndConfigFlagsRejected() {
-        for args in [["--remote", "ws://evil:1"], ["--config", "x=y"], ["-c", "x=y"], ["--cd", "/tmp"], ["exec"], ["--model"]] {
+    func testManagedPlanCannotRedirectOrRunUnmanagedCommand() {
+        for args in [["--remote", "ws://evil:1"], ["--remote=ws://evil:1", "resume"], ["exec"], ["login"], ["--no-daemon"]] {
             XCTAssertThrowsError(try LaunchPlan(executable: URL(fileURLWithPath: "/usr/bin/codex"), workingDirectory: URL(fileURLWithPath: "/tmp"), port: 9001, name: nil, arguments: args))
         }
+    }
+    func testCLICompatibilityRouting() {
+        let cwd = URL(fileURLWithPath: "/tmp/project")
+        for args in [[], ["--model", "gpt-6-sol"], ["--config", "x=y", "A prompt"],
+                     ["resume"], ["resume", "--last"], ["-m", "gpt-6-sol", "resume", "--last"],
+                     ["fork", "--last"], ["--image", "exec", "photo.png"],
+                     ["--", "resume"], ["--", "--remote"],
+                     ["resume", "--", "--help"]] {
+            XCTAssertEqual(CLIInvocation(arguments: args, workingDirectory: cwd).route, .managed, "\(args)")
+        }
+        for args in [["exec", "hello"], ["login"], ["mcp", "list"], ["app-server"],
+                     ["--help"], ["resume", "--help"], ["--version"], ["--remote", "ws://127.0.0.1:9002"],
+                     ["resume", "--remote=unix:///tmp/codex.sock"], ["--no-daemon"], ["--future-option", "value"]] {
+            XCTAssertEqual(CLIInvocation(arguments: args, workingDirectory: cwd).route, .passthrough, "\(args)")
+        }
+    }
+    func testResumePreservesDirectoryChoiceAndArguments() throws {
+        let cwd = URL(fileURLWithPath: "/tmp/project")
+        let args = ["--model", "gpt-6-sol", "resume", "--last"]
+        let invocation = CLIInvocation(arguments: args, workingDirectory: cwd)
+        XCTAssertEqual(invocation.workingDirectory.path, cwd.path)
+        let plan = try LaunchPlan(executable: URL(fileURLWithPath: "/usr/bin/codex"), workingDirectory: invocation.workingDirectory,
+                                  port: 9001, name: nil, arguments: args)
+        XCTAssertEqual(plan.cliArguments, ["--remote", "ws://127.0.0.1:9001"] + args)
+        XCTAssertFalse(plan.cliArguments.contains("--cd"), "Resume must retain Codex's saved-directory choice")
+        let explicit = CLIInvocation(arguments: ["--cd", "../other", "resume", "--last"], workingDirectory: cwd)
+        XCTAssertEqual(explicit.workingDirectory.standardizedFileURL.path, "/tmp/other")
     }
     func record() -> SessionRegistration {
         SessionRegistration(name: "Project", workingDirectory: "/private/tmp/project", endpoint: "ws://127.0.0.1:9001",

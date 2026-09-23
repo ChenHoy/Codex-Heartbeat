@@ -15,31 +15,18 @@ public struct LaunchPlan {
               !executable.path.contains("\0"), !workingDirectory.path.contains("\0") else {
             throw HeartbeatError.message("Invalid launch path or port")
         }
-        // Explicit allowlist: positional prompt, --model, --no-alt-screen.
-        // Other flags could redirect the CLI or make its cwd/config differ from the managed session.
-        var index = 0
-        var promptSeen = false
-        while index < arguments.count {
-            let arg = arguments[index]
-            guard !arg.contains("\0") else { throw HeartbeatError.message("NUL in argument") }
-            if arg == "--model" || arg == "-m" {
-                index += 1
-                guard index < arguments.count, !arguments[index].isEmpty, !arguments[index].contains("\0") else {
-                    throw HeartbeatError.message("--model requires a value")
-                }
-            } else if arg == "--no-alt-screen" {
-                // Allowed without a value.
-            } else if arg.hasPrefix("-") || promptSeen || ["resume", "fork", "exec", "app-server"].contains(arg) {
-                throw HeartbeatError.message("Unsupported CLI argument: use only --model, --no-alt-screen and one quoted prompt")
-            } else { promptSeen = true }
-            index += 1
+        guard arguments.allSatisfy({ !$0.contains("\0") }),
+              CLIInvocation(arguments: arguments, workingDirectory: workingDirectory).route == .managed else {
+            throw HeartbeatError.message("This Codex command cannot use a managed App Server")
         }
         self.executable = executable.resolvingSymlinksInPath()
         self.workingDirectory = workingDirectory.standardizedFileURL.resolvingSymlinksInPath()
         self.endpoint = endpoint
         self.name = name ?? self.workingDirectory.lastPathComponent
         guard !self.name.isEmpty, self.name.count <= 256 else { throw HeartbeatError.message("Name must be 1–256 characters") }
-        cliArguments = ["--remote", endpoint, "--cd", self.workingDirectory.path] + arguments
+        // chdir supplies Codex's ordinary current-directory default. Injecting
+        // --cd would override its saved-directory choice for `resume`/`fork`.
+        cliArguments = ["--remote", endpoint] + arguments
     }
     public static func findCodex(environment: [String: String] = ProcessInfo.processInfo.environment) throws -> URL {
         let paths = (environment["PATH"] ?? "/opt/homebrew/bin:/usr/local/bin:/usr/bin").split(separator: ":")

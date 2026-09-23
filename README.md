@@ -43,13 +43,21 @@ cd /path/to/your/project
 /Users/chen/code/CodexHeartbeat/dist/bin/codex-heartbeat
 ```
 
-Or name the session and select a directory/model:
+Or resume the most recent chat in this directory:
 
 ```sh
-codex-heartbeat --name "Website" --cd /path/to/website -- --model gpt-6-sol
+codex-heartbeat resume --last
 ```
 
-Only `--model`/`-m`, `--no-alt-screen`, and one quoted initial prompt are passed through after `--`. Arbitrary Codex subcommands, configuration, remote endpoints, and cwd overrides are rejected. The working directory is passed as a literal argument, never through a shell. Existing Codex settings still apply normally; use the TUI for your ordinary permission/model choices.
+`codex-heartbeat resume SESSION_ID`, `codex-heartbeat fork --last`, and ordinary Codex global flags such as `--model`, `--config`, `--sandbox`, and `--cd` also work. Interactive new sessions, resume, and fork get a private loopback App Server and appear in the dashboard. Other Codex subcommands (`login`, `mcp`, `exec`, `review`, `app-server`, etc.) run unchanged without Heartbeat monitoring. `--help` and `--version` show Codex's own output; wrapper help is `--heartbeat-help`. An explicitly supplied `--remote` or `--no-daemon` is passed through unmonitored rather than replaced. Arguments are passed literally, never through a shell. The wrapper does not silently alter model, sandbox, approvals, or the directory-choice prompt when resuming.
+
+For a shell alias that behaves like `codex` for the installed CLI, add this to your `.zshrc` and start a new shell:
+
+```sh
+alias codex='/Users/chen/code/CodexHeartbeat/dist/bin/codex-heartbeat'
+```
+
+Use `command codex` only if your `PATH` resolves the original executable ahead of the wrapper; `codex-heartbeat` itself locates and executes the real binary. Keep Warm still has to be enabled for each resumed thread. Wrapper-only naming remains available as `codex-heartbeat --heartbeat-name "Website" …` (or the earlier `--name` spelling), but do not put that option in an alias intended to mirror Codex.
 
 Start another wrapper in another terminal to manage another session. Existing sessions launched with plain `codex` are not adopted or modified. Exit the normal TUI with `/quit`; the registration and dedicated server are cleaned up. Ctrl-C is delivered to the TUI, not treated as a request to kill its server. Closing the terminal or terminating the launcher also initiates cleanup.
 
@@ -120,7 +128,7 @@ sh scripts/generate-schemas.sh
 plutil -lint Resources/Info.plist
 ```
 
-Unit tests cover context math, threshold boundaries, nullable windows, cache-write defaults, all usage fields, activity/compaction/error cancellation, minimum interval, two-pulse limit, independent opt-in state, safe arguments, hostile endpoints, PID reuse, registry permissions/round-trip/stale handling/symlinks, and the monitoring mutation denylist.
+Unit tests cover context math, threshold boundaries, nullable windows, cache-write defaults, all usage fields, activity/compaction/error cancellation, minimum interval, two-pulse limit, independent opt-in state, CLI routing and resume argument construction, literal shell-metacharacter handling, hostile endpoints, PID reuse, registry permissions/round-trip/stale handling/symlinks, and the monitoring mutation denylist.
 
 The opt-in integration test starts a dedicated loopback App Server, opens a persistent test thread, injects one harmless test-history message to materialize its history, joins with a separate monitor connection, and checks live notification delivery without calling `turn/start`. It archives the test thread afterward; the archived test history remains in Codex's own storage. This default integration test does not consume model allowance.
 

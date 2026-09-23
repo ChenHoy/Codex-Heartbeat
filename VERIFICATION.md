@@ -2,6 +2,16 @@
 
 Created a new project at `/Users/chen/code/CodexHeartbeat` after the existing scaffold could not be located and the user explicitly authorized starting a new project through Spokenly. No unrelated project files were changed. No global Xcode selection or Codex settings were changed.
 
+## Git and CLI compatibility update
+
+Initialized this directory as its own Git repository and committed the pre-compatibility project as `fa6b262` (`Initial Codex Heartbeat app and managed CLI`). The compatibility work is subsequent to that baseline. Git used the machine's automatically inferred author identity; no global Git configuration was changed.
+
+The launcher now routes new interactive sessions, `resume`, and `fork` through its own loopback App Server with the original Codex arguments preserved. Other CLI commands are executed directly, unchanged and unmonitored. Explicit `--remote`/`--no-daemon` is also passed through. Unit tests cover routing, relative `--cd`, resume construction without an injected `--cd`, and literal metacharacters. A debug build's `--version` and `resume --help` matched the installed Codex CLI.
+
+After the routing change, `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --scratch-path .build-xcode` passed 24 unit tests (2 opt-in integration tests skipped). Running the integration suite with `HEARTBEAT_INTEGRATION=1` passed both tests. The release build, app packaging, and `codesign --verify --deep --strict` passed. `dist/bin/codex-heartbeat login --help` showed the installed Codex login help via direct pass-through.
+
+A no-prompt PTY smoke run of `codex-heartbeat resume --last --no-alt-screen` started the managed server and reached Codex's resume screen. Codex reported that the chosen conversation was already open in another app; it was not unlocked or used. Exiting cleaned up the new registration. This verifies resume routing and startup, but not a completed interactive resumed chat. The separate pre-existing managed registration was untouched. No model turn was submitted in this smoke run.
+
 ## Build and tests
 
 | Command/check | Observed result |
