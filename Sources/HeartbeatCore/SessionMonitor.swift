@@ -7,6 +7,7 @@ public struct MonitoredThread: Identifiable {
     public var cwd: String
     public var status: SessionStatus
     public var usage: ThreadUsage?
+    public var usageUpdatedAt: Date?
     public var lastActivity: Date
     public var schedule = HeartbeatSchedule()
     public var lastHeartbeat: Date?
@@ -28,6 +29,7 @@ public struct MonitoredThread: Identifiable {
     private var heartbeatTurns: [String: String] = [:] // thread ID -> turn ID
     private var knownHeartbeatTurns = Set<String>()
     private var deferredEvents: [String: [(String, [String: Any])]] = [:]
+    private var refreshing = false
     public var warning: Bool { connectionStatus == .failed || connectionStatus == .disconnected || threads.contains { $0.status == .failed || $0.heartbeatError } }
     public init(registration: SessionRegistration) { self.registration = registration; id = registration.id }
 
@@ -57,7 +59,9 @@ public struct MonitoredThread: Identifiable {
         }
     }
     public func stop() {
-        task?.cancel(); task = nil; client?.close(); client = nil
+        task?.cancel(); task = nil
+        client?.onNotification = nil; client?.onDisconnect = nil
+        client?.close(); client = nil
         for index in threads.indices { threads[index].schedule.stop("Monitoring stopped") }
         startingHeartbeat.removeAll(); heartbeatTurns.removeAll(); knownHeartbeatTurns.removeAll(); deferredEvents.removeAll()
     }
@@ -66,6 +70,12 @@ public struct MonitoredThread: Identifiable {
         connectionStatus = .disconnected; connectionMessage = "Connecting…"
         start()
     }
+    public func refreshNow() async {
+        guard connectionMessage != "Connecting…" else { return }
+        guard connectionStatus == .idle, let client else { reconnect(); return }
+        do { try await refresh(client) }
+        catch { disconnect(error.localizedDescription) }
+    }
     private func disconnect(_ message: String) {
         connectionStatus = .disconnected; connectionMessage = message
         for index in threads.indices {
@@ -73,9 +83,13 @@ public struct MonitoredThread: Identifiable {
             threads[index].schedule.stop("Disconnected")
         }
         startingHeartbeat.removeAll(); heartbeatTurns.removeAll(); knownHeartbeatTurns.removeAll(); deferredEvents.removeAll()
-        client?.close()
+        client?.onNotification = nil; client?.onDisconnect = nil
+        client?.close(); client = nil
     }
     private func refresh(_ rpc: AppServerClient) async throws {
+        guard !refreshing else { return }
+        refreshing = true
+        defer { refreshing = false }
         var cursor: String?
         var loaded = Set<String>()
         repeat {
@@ -219,7 +233,9 @@ public struct MonitoredThread: Identifiable {
                 threads[index].schedule.stop("Invalid telemetry")
                 threads[index].note = "Invalid token telemetry received"; return
             }
-            threads[index].usage = notification.tokenUsage; threads[index].contextIsStale = false
+            threads[index].usage = notification.tokenUsage
+            threads[index].usageUpdatedAt = Date()
+            threads[index].contextIsStale = false
             if !knownHeartbeatTurns.contains(notification.turnId) && !startingHeartbeat.contains(id) { userActivity(index) }
         case "thread/status/changed":
             if let status = params["status"] as? [String: Any], let type = status["type"] as? String {

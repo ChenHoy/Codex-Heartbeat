@@ -7,34 +7,51 @@ import HeartbeatCore
     @Published var warning: String?
     @Published var now = Date()
     private var loop: Task<Void, Never>?
+    @Published private(set) var isRefreshing = false
     init() { start() }
     var hasWarning: Bool { warning != nil || sessions.contains { $0.warning } }
     var isKeepingWarm: Bool { sessions.contains { $0.threads.contains { $0.schedule.enabled } } }
     var symbol: String { hasWarning ? "heart.slash" : isKeepingWarm ? "heart.fill" : "heart" }
+    private func scanSessions() async throws {
+        let scan = try await Task.detached { try SessionRegistry().scan() }.value
+        warning = scan.warnings.first
+        let ids = Set(scan.sessions.map(\.id))
+        for removed in sessions where !ids.contains(removed.id) { removed.stop() }
+        sessions.removeAll { !ids.contains($0.id) }
+        for registration in scan.sessions {
+            if let existing = sessions.first(where: { $0.id == registration.id }) {
+                if existing.registration == registration { continue }
+                existing.stop()
+                sessions.removeAll { $0.id == registration.id }
+            }
+            let monitor = SessionMonitor(registration: registration)
+            sessions.append(monitor)
+            monitor.start()
+        }
+    }
     func start() {
         guard loop == nil else { return }
         loop = Task {
             while !Task.isCancelled {
                 do {
-                    let scan = try await Task.detached { try SessionRegistry().scan() }.value
-                    warning = scan.warnings.first
-                    let ids = Set(scan.sessions.map(\.id))
-                    for removed in sessions where !ids.contains(removed.id) { removed.stop() }
-                    sessions.removeAll { !ids.contains($0.id) }
-                    for registration in scan.sessions {
-                        if let existing = sessions.first(where: { $0.id == registration.id }) {
-                            if existing.registration != registration {
-                                existing.stop(); sessions.removeAll { $0.id == registration.id }
-                            } else { continue }
-                        }
-                        let monitor = SessionMonitor(registration: registration)
-                        sessions.append(monitor); monitor.start()
-                    }
+                    try await scanSessions()
                     for session in sessions { session.tick() }
                 } catch { warning = "Registry unavailable: \(error.localizedDescription)" }
                 now = Date()
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
             }
+        }
+    }
+    func refreshAll() {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        Task {
+            defer { isRefreshing = false }
+            do {
+                try await scanSessions()
+                for session in sessions { await session.refreshNow() }
+                now = Date()
+            } catch { warning = "Registry unavailable: \(error.localizedDescription)" }
         }
     }
     func stop() { loop?.cancel(); loop = nil; sessions.forEach { $0.stop() } }
@@ -57,13 +74,23 @@ import HeartbeatCore
 
 struct DashboardView: View {
     @ObservedObject var dashboard: Dashboard
+    @Environment(\.colorScheme) private var colorScheme
+    private var panelBackground: Color {
+        colorScheme == .dark ? Color(white: 0.09) : Color(nsColor: .windowBackgroundColor)
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Image(systemName: "heart").foregroundStyle(.pink)
+                Image(systemName: dashboard.isKeepingWarm ? "heart.fill" : "heart")
+                    .foregroundStyle(dashboard.isKeepingWarm ? .pink : .secondary)
                 Text("Codex Heartbeat").font(.headline)
                 Spacer()
                 Text("\(dashboard.sessions.count) sessions").foregroundStyle(.secondary).font(.caption)
+                Button { dashboard.refreshAll() } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(.borderless)
+                    .disabled(dashboard.isRefreshing)
+                    .help("Refresh all sessions")
+                    .accessibilityLabel("Refresh all sessions")
             }
             Text("Live monitoring · opt-in keep-warm")
                 .font(.caption).foregroundStyle(.secondary)
@@ -92,13 +119,20 @@ struct DashboardView: View {
                 Spacer()
                 Button("Quit") { dashboard.stop(); NSApplication.shared.terminate(nil) }.keyboardShortcut("q")
             }
-        }.padding(16).frame(width: 460)
+        }
+        .padding(16)
+        .frame(width: 460)
+        .background(panelBackground.ignoresSafeArea())
     }
 }
 
 struct SessionView: View {
     @ObservedObject var monitor: SessionMonitor
     let now: Date
+    @Environment(\.colorScheme) private var colorScheme
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color(white: 0.14) : Color(nsColor: .controlBackgroundColor)
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -121,7 +155,13 @@ struct SessionView: View {
             ForEach(monitor.threads) { thread in
                 ThreadView(thread: thread, monitor: monitor, now: now)
             }
-        }.padding(12).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+        }
+        .padding(12)
+        .background(cardBackground, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.primary.opacity(colorScheme == .dark ? 0.09 : 0.06))
+        }
     }
 }
 
@@ -169,6 +209,10 @@ struct ThreadView: View {
                 metric("Output", thread.usage?.last.outputTokens, "Reasoning output", thread.usage?.last.reasoningOutputTokens)
                 metric("Thread total", thread.usage?.total.totalTokens, "Context window", thread.usage?.modelContextWindow)
             }.font(.caption2).monospacedDigit()
+            if let usage = thread.usage, !thread.contextIsStale {
+                Text("Estimated context cache: \(count(usage.last.cachedInputTokens)) tokens")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
             Toggle("Keep Warm", isOn: Binding(
                 get: { thread.schedule.enabled },
                 set: { monitor.setKeepWarm($0, threadID: thread.id) }

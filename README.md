@@ -63,6 +63,8 @@ Start another wrapper in another terminal to manage another session. Existing se
 
 Click the heart to see project/thread names, directories, active/idle/disconnected/failed state, last activity, latest input/cached/cache-write/output/reasoning/total tokens, lifetime thread total, model context window, and estimated context remaining. Finder buttons open directories through `NSWorkspace`, not shell commands.
 
+The dashboard refresh button rescans all managed sessions and requests current thread summaries from connected App Servers. A disconnected session reconnects on refresh; its own Reconnect button does the same. Each thread also shows its latest reported cached input as an estimated context cache size in tokens. This is request telemetry, not a measurement of backend cache residency or bytes stored.
+
 The heart is outlined while no keep-warm schedule is enabled, filled while at least one is enabled, and slashed for a disconnected/error warning. Each row shows when a heartbeat was sent and when the next is due. Reconnect is manual after a transport error; there is no retry loop.
 
 ## Context and activity semantics
