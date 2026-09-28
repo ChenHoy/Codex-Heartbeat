@@ -46,7 +46,7 @@ final class IntegrationTests: XCTestCase {
         }
         let binary = try LaunchPlan.findCodex()
         let liveTurn = ProcessInfo.processInfo.environment["HEARTBEAT_LIVE_TURN"] == "1"
-        let workingDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("heartbeat-probe-" + UUID().uuidString)
+        let workingDirectory = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("heartbeat-probe-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: workingDirectory) }
         let port = hb_free_port(); XCTAssertGreaterThan(port, 1023)
@@ -136,6 +136,46 @@ final class IntegrationTests: XCTestCase {
         try await send(["id": 3, "method": "thread/name/set", "params": ["threadId": threadID, "name": "Heartbeat protocol probe"]])
         _ = try await response(3)
         await fulfillment(of: [notification], timeout: 5)
+        // Exercise the production discovery/reconnect path with independently
+        // verified owner, server and CLI identities.
+        let cli = Process()
+        let cliInput = Pipe()
+        cli.executableURL = binary; cli.arguments = ["app-server"]
+        cli.standardInput = cliInput; cli.standardOutput = FileHandle.nullDevice
+        cli.standardError = FileHandle.nullDevice
+        try cli.run()
+        defer { if cli.isRunning { cli.terminate(); cli.waitUntilExit() } }
+        let registration = SessionRegistration(name: "Monitor integration", workingDirectory: workingDirectory.path,
+            endpoint: endpoint.absoluteString, owner: try ProcessIdentity.capture(getpid()),
+            server: try ProcessIdentity.capture(server.processIdentifier),
+            cli: try ProcessIdentity.capture(cli.processIdentifier), codexVersion: "integration")
+        XCTAssertTrue(registration.validConnection)
+        let session = SessionMonitor(registration: registration)
+        defer { session.stop() }
+        session.start()
+        func awaitDiscovery() async throws {
+            for _ in 0..<100 {
+                if session.connectionStatus == .idle, session.threads.contains(where: { $0.id == threadID }) { return }
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            XCTFail("SessionMonitor did not discover root thread: \(session.connectionMessage); \(session.threadWarning ?? "no decoding warning")")
+        }
+        try await awaitDiscovery()
+        XCTAssertEqual(session.threads.first(where: { $0.id == threadID })?.cwd, current["cwd"] as? String)
+        XCTAssertNil(session.threads.first(where: { $0.id == threadID })?.usage)
+        XCTAssertFalse(session.threads.contains { $0.schedule.enabled })
+        for _ in 0..<50 {
+            session.setKeepWarm(true, threadID: threadID)
+            if session.threads.first(where: { $0.id == threadID })?.schedule.enabled == true { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        let due = try XCTUnwrap(session.threads.first(where: { $0.id == threadID })?.schedule.due)
+        XCTAssertEqual(due - ProcessInfo.processInfo.systemUptime, HeartbeatSchedule.interval, accuracy: 2)
+        session.reconnect()
+        try await awaitDiscovery()
+        await session.refreshNow()
+        XCTAssertEqual(session.threads.first(where: { $0.id == threadID })?.status, .idle)
+        XCTAssertFalse(session.threads.contains { $0.schedule.enabled })
         if liveTurn {
             let usageEvent = expectation(description: "Real thread/tokenUsage/updated")
             let completed = expectation(description: "Real turn/completed")
@@ -162,6 +202,11 @@ final class IntegrationTests: XCTestCase {
             let heartbeatID = try await monitor.startHeartbeat(threadID: threadID)
             XCTAssertFalse(heartbeatID.isEmpty)
             await fulfillment(of: [usageEvent, completed], timeout: 60)
+            for _ in 0..<50 {
+                if session.threads.first(where: { $0.id == threadID })?.usage != nil { break }
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            XCTAssertGreaterThan(session.threads.first(where: { $0.id == threadID })?.usage?.last.inputTokens ?? 0, 0)
             XCTAssertTrue(toolItems.isEmpty, "Unexpected tool items in test turn: \(toolItems)")
         }
         try await send(["id": 4, "method": "thread/archive", "params": ["threadId": threadID]])

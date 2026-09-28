@@ -13,6 +13,7 @@ let package = Package(
         .target(name: "HeartbeatCore", dependencies: ["HeartbeatSystem"]),
         .executableTarget(name: "CodexHeartbeat", dependencies: ["HeartbeatCore"]),
         .executableTarget(name: "HeartbeatLauncher", dependencies: ["HeartbeatCore", "HeartbeatSystem"]),
+        .testTarget(name: "DashboardTests", dependencies: ["CodexHeartbeat", "HeartbeatCore"]),
         .testTarget(name: "HeartbeatCoreTests", dependencies: ["HeartbeatCore", "HeartbeatSystem"])
     ]
 )

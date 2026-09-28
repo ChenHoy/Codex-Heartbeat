@@ -8,7 +8,7 @@ import HeartbeatCore
     @Published var now = Date()
     private var loop: Task<Void, Never>?
     @Published private(set) var isRefreshing = false
-    init() { start() }
+    init(startMonitoring: Bool = true) { if startMonitoring { start() } }
     var hasWarning: Bool { warning != nil || sessions.contains { $0.warning } }
     var isKeepingWarm: Bool { sessions.contains { $0.threads.contains { $0.schedule.enabled } } }
     var symbol: String { hasWarning ? "heart.slash" : isKeepingWarm ? "heart.fill" : "heart" }
@@ -112,7 +112,7 @@ struct DashboardView: View {
                         SessionView(monitor: monitor, now: dashboard.now)
                     }
                 }
-            }.frame(maxHeight: 540)
+            }.frame(height: dashboard.sessions.isEmpty ? 140 : 420)
             Divider()
             HStack {
                 Text("Local only · no analytics").font(.caption2).foregroundStyle(.secondary)
@@ -148,6 +148,10 @@ struct SessionView: View {
             Text(monitor.connectionMessage).font(.caption).foregroundStyle(monitor.warning ? .orange : .secondary)
             if monitor.connectionStatus == .disconnected {
                 Button("Reconnect") { monitor.reconnect() }.controlSize(.small)
+            }
+            if let warning = monitor.threadWarning {
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(.orange)
             }
             if monitor.threads.isEmpty {
                 Text("Waiting for the terminal to open a thread…").font(.caption).foregroundStyle(.secondary)
@@ -200,7 +204,7 @@ struct ThreadView: View {
                     Text("Window \(count(usage.modelContextWindow))")
                 }.font(.caption)
             } else {
-                Text(thread.contextIsStale ? "Context estimate stale after compaction" : "Context usage not yet reported")
+                Text(thread.contextIsStale ? "Context estimate stale after compaction" : "Waiting for token usage from the next completed turn.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 4) {

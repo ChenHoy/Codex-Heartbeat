@@ -222,6 +222,17 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(monitor.threads[0].status, .failed)
         XCTAssertFalse(monitor.threads[0].schedule.enabled)
     }
+    @MainActor func testMalformedThreadSummarySurfacesWarningAndRecovers() {
+        let monitor = SessionMonitor(registration: record())
+        monitor.consume(method: "thread/started", params: ["thread": ["id": "broken"]])
+        XCTAssertTrue(monitor.warning)
+        XCTAssertTrue(monitor.threadWarning?.contains("broken") == true)
+        XCTAssertTrue(monitor.threads.isEmpty)
+        monitor.consume(method: "thread/started", params: ["thread": ["id": "broken", "cwd": "/tmp", "updatedAt": 1, "status": ["type": "idle"]]])
+        XCTAssertNil(monitor.threadWarning)
+        XCTAssertEqual(monitor.threads.count, 1)
+        XCTAssertFalse(monitor.threads[0].schedule.enabled)
+    }
     @MainActor func testResumeCannotOverrideUserConfiguration() async {
         let rpc = AppServerClient(endpoint: URL(string: "ws://127.0.0.1:9001")!)
         let cases: [[String: Any]] = [

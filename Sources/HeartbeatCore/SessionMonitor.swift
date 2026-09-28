@@ -22,6 +22,8 @@ public struct MonitoredThread: Identifiable {
     @Published public private(set) var threads: [MonitoredThread] = []
     @Published public private(set) var connectionStatus: SessionStatus = .disconnected
     @Published public private(set) var connectionMessage = "Connecting…"
+    @Published public private(set) var threadWarnings: [String: String] = [:]
+    public var threadWarning: String? { threadWarnings.keys.sorted().compactMap { threadWarnings[$0] }.first }
     private var client: AppServerClient?
     private var task: Task<Void, Never>?
     private var attached = Set<String>()
@@ -30,7 +32,7 @@ public struct MonitoredThread: Identifiable {
     private var knownHeartbeatTurns = Set<String>()
     private var deferredEvents: [String: [(String, [String: Any])]] = [:]
     private var refreshing = false
-    public var warning: Bool { connectionStatus == .failed || connectionStatus == .disconnected || threads.contains { $0.status == .failed || $0.heartbeatError } }
+    public var warning: Bool { !threadWarnings.isEmpty || connectionStatus == .failed || connectionStatus == .disconnected || threads.contains { $0.status == .failed || $0.heartbeatError } }
     public init(registration: SessionRegistration) { self.registration = registration; id = registration.id }
 
     public func start() {
@@ -99,11 +101,12 @@ public struct MonitoredThread: Identifiable {
             loaded.formUnion(list["data"] as? [String] ?? [])
             cursor = list["nextCursor"] as? String
         } while cursor != nil && !Task.isCancelled
+        threadWarnings = threadWarnings.filter { loaded.contains($0.key) }
         for id in loaded.sorted() {
             do {
             let result = try await rpc.request("thread/read", params: ["threadId": id, "includeTurns": false])
-            guard let object = result["thread"] as? [String: Any], let summary = decode(ThreadSummary.self, object),
-                  summary.parentThreadId == nil else { continue }
+            guard let summary = readSummary(result["thread"], threadID: id) else { continue }
+            guard summary.parentThreadId == nil else { continue }
             upsert(summary)
             if !attached.contains(id) {
                 // Rejoin only threads reported as loaded. No model turn, config overrides,
@@ -217,8 +220,12 @@ public struct MonitoredThread: Identifiable {
         threads[index].schedule.activity()
     }
     public func consume(method: String, params: [String: Any]) {
-        if method == "thread/started", let object = params["thread"] as? [String: Any],
-           let summary = decode(ThreadSummary.self, object), summary.parentThreadId == nil { upsert(summary); return }
+        if method == "thread/started" {
+            let object = params["thread"] as? [String: Any]
+            if let summary = readSummary(object, threadID: object?["id"] as? String ?? "unknown"),
+               summary.parentThreadId == nil { upsert(summary) }
+            return
+        }
         guard let id = params["threadId"] as? String, let index = threads.firstIndex(where: { $0.id == id }) else { return }
         let turnID = params["turnId"] as? String ?? (params["turn"] as? [String: Any])?["id"] as? String
         let ownTurn = turnID.map { knownHeartbeatTurns.contains($0) } ?? false
@@ -294,6 +301,20 @@ public struct MonitoredThread: Identifiable {
         interruptIfOwned(threads[index].id)
         threads[index].contextIsStale = true
         threads[index].note = "Context compacted · waiting for fresh usage"
+    }
+    private func readSummary(_ object: Any?, threadID: String) -> ThreadSummary? {
+        do {
+            guard let object = object as? [String: Any] else {
+                throw HeartbeatError.message("Missing thread summary")
+            }
+            let data = try JSONSerialization.data(withJSONObject: object)
+            let summary = try JSONDecoder().decode(ThreadSummary.self, from: data)
+            threadWarnings.removeValue(forKey: threadID)
+            return summary
+        } catch {
+            threadWarnings[threadID] = "Unable to decode thread \(threadID). Monitoring will retry on refresh."
+            return nil
+        }
     }
     private func decode<T: Decodable>(_ type: T.Type, _ object: [String: Any]) -> T? {
         guard let data = try? JSONSerialization.data(withJSONObject: object) else { return nil }

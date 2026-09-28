@@ -85,3 +85,18 @@ Remaining limits: no hard no-tools guarantee; no observation of unsubmitted term
 ## Separate hook issue
 
 The enabled Superwhisper plugin's six hooks all invoke `${SUPERWHISPER_CODEX_HOOK:-/Applications/superwhisper.app/Contents/Resources/agent-hook} codex`. The override was unset and that executable was absent. This explains shell exit 127. Disable `superwhisper@superwhisper` in Codex or set `enabled = false` in its existing `~/.codex/config.toml` plugin section and restart Codex; alternatively reinstall Superwhisper. Spokenly is independent. No hook/plugin configuration was modified during this work.
+
+
+## Dashboard visibility restoration — 2026-09-28
+
+The dashboard scroll view now has an explicit 420-point height with sessions and 140 points when empty, within the existing 460-point panel width. Unknown usage says “Waiting for token usage from the next completed turn.” Refresh remains passive. Thread summary decoding failures produce a published session warning and clear when the same thread decodes successfully. The opt-in two-pulse, 25-minute scheduling policy is unchanged.
+
+Verification completed with the Xcode toolchain:
+
+- 25 core unit tests passed, including malformed-summary warning/recovery and existing schedule/activity cancellation coverage.
+- The new hosted SwiftUI dashboard test passed for zero, one and four sessions in light and dark appearances. It checks the actual NSScrollView viewport height, positive content height, panel width, overflow, and scrolling to a later card. Rendered PNGs in `/private/tmp/heartbeat-dashboard-*.png` were visually inspected: directory, connection state, activity, unavailable usage, reported usage, context estimate, cached tokens and Keep Warm controls are visible. These are hosted-view screenshots, not packaged menu-popover screenshots.
+- Both local integration tests passed. Production SessionMonitor discovered the root thread, exposed its directory, started with Keep Warm off, scheduled an opt-in pulse approximately 1,500 seconds away, then reconnected with monitoring restored and Keep Warm off. One live prompt-only turn delivered usage through SessionMonitor: input 14,984, cached input 8,064, total 14,989, window 258,400. No tool items were observed in that test turn.
+- Release compilation and `scripts/build-app.sh` succeeded. Both the bundle and launcher passed strict codesign verification; `git diff --check` passed.
+- A packaged managed CLI test received `OK.` for the dummy prompt. The initial smoke command mistakenly put `--no-alt-screen` after the CLI separator, causing it to become an initial prompt; that turn was interrupted before submitting the intended dummy prompt. A separate no-prompt managed session exited with `/quit` (exit 0); `--list` afterward contained only the unrelated pre-existing GamesRLProject session.
+
+Remaining visual acceptance limitation: attempts to inspect the packaged menu-only app by path and bundle ID repeatedly returned computer-use timeout -10005. The app was opened via Launch Services. A Spokenly request for the user to inspect its session card and enable Keep Warm was skipped. Therefore the actual packaged popover and its displayed countdown have not been visually accepted; hosted-view visual QA and production scheduling checks passed, but do not establish that final menu-popover acceptance. No 25-minute wall-clock pulse was awaited.
