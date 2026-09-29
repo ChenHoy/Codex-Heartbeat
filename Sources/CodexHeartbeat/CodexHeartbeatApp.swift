@@ -74,6 +74,8 @@ import HeartbeatCore
 
 struct DashboardView: View {
     @ObservedObject var dashboard: Dashboard
+    @AppStorage("contextDisplayMode") private var contextDisplayMode = ContextDisplayMode.modelCapacity.rawValue
+    private var contextMode: ContextDisplayMode { ContextDisplayMode(rawValue: contextDisplayMode) ?? .modelCapacity }
     @Environment(\.colorScheme) private var colorScheme
     private var panelBackground: Color {
         colorScheme == .dark ? Color(white: 0.09) : Color(nsColor: .windowBackgroundColor)
@@ -94,6 +96,15 @@ struct DashboardView: View {
             }
             Text("Live monitoring · opt-in keep-warm")
                 .font(.caption).foregroundStyle(.secondary)
+            Picker("Context basis", selection: $contextDisplayMode) {
+                ForEach(ContextDisplayMode.allCases, id: \.rawValue) { mode in
+                    Text(mode.label).tag(mode.rawValue)
+                }
+            }.pickerStyle(.segmented)
+            Text(contextMode == .modelCapacity
+                 ? "Published model capacity. Codex may compact earlier."
+                 : "Effective window reported by Codex for this session.")
+                .font(.caption2).foregroundStyle(.secondary)
             if let warning = dashboard.warning {
                 Label(warning, systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.orange)
             }
@@ -109,7 +120,7 @@ struct DashboardView: View {
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
                     }
                     ForEach(dashboard.sessions) { monitor in
-                        SessionView(monitor: monitor, now: dashboard.now)
+                        SessionView(monitor: monitor, now: dashboard.now, contextMode: contextMode)
                     }
                 }
             }.frame(height: dashboard.sessions.isEmpty ? 140 : 420)
@@ -129,6 +140,7 @@ struct DashboardView: View {
 struct SessionView: View {
     @ObservedObject var monitor: SessionMonitor
     let now: Date
+    var contextMode: ContextDisplayMode = .modelCapacity
     @Environment(\.colorScheme) private var colorScheme
     private var cardBackground: Color {
         colorScheme == .dark ? Color(white: 0.14) : Color(nsColor: .controlBackgroundColor)
@@ -157,7 +169,7 @@ struct SessionView: View {
                 Text("Waiting for the terminal to open a thread…").font(.caption).foregroundStyle(.secondary)
             }
             ForEach(monitor.threads) { thread in
-                ThreadView(thread: thread, monitor: monitor, now: now)
+                ThreadView(thread: thread, monitor: monitor, now: now, contextMode: contextMode)
             }
         }
         .padding(12)
@@ -173,8 +185,12 @@ struct ThreadView: View {
     let thread: MonitoredThread
     @ObservedObject var monitor: SessionMonitor
     let now: Date
+    var contextMode: ContextDisplayMode = .modelCapacity
+    private var window: Int64? { contextMode.window(model: thread.model, usage: thread.usage) }
+    private var fractionUsed: Double? { contextMode.fractionUsed(model: thread.model, usage: thread.usage) }
     private var color: Color {
-        switch thread.usage?.pressure { case .orange: return .orange; case .red: return .red; default: return .green }
+        guard let used = fractionUsed else { return .secondary }
+        return used > 0.8 ? .red : used > 0.6 ? .orange : .green
     }
     private func count(_ number: Int64?) -> String { number.map { $0.formatted() } ?? "—" }
     private var elapsed: String {
@@ -196,22 +212,29 @@ struct ThreadView: View {
             if thread.cwd != monitor.registration.workingDirectory {
                 Text(thread.cwd).font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
             }
-            if let usage = thread.usage, let used = usage.fractionUsed, !thread.contextIsStale {
+            Text("Model: \(thread.model ?? "Unknown")").font(.caption).foregroundStyle(.secondary)
+            if let used = fractionUsed, !thread.contextIsStale {
                 ProgressView(value: used).tint(color)
                 HStack {
-                    Text("≈\(Int((usage.percentRemaining ?? 0).rounded()))% context remaining").foregroundStyle(color)
+                    Text("≈\(Int((used * 100).rounded()))% used").foregroundStyle(color)
                     Spacer()
-                    Text("Window \(count(usage.modelContextWindow))")
+                    Text("\(contextMode.label): \(count(window))")
                 }.font(.caption)
             } else {
-                Text(thread.contextIsStale ? "Context estimate stale after compaction" : "Waiting for token usage from the next completed turn.")
+                Text(thread.contextIsStale ? "Context estimate stale · waiting for fresh usage" : thread.usage == nil
+                     ? "Waiting for token usage from the next completed turn."
+                     : contextMode == .modelCapacity ? "Model capacity unknown. Select Codex session window to use reported telemetry."
+                     : "Codex session window unavailable.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 4) {
                 metric("Latest input", thread.usage?.last.inputTokens, "Cached input", thread.usage?.last.cachedInputTokens)
                 metric("Cache write", thread.usage?.last.cacheWriteInputTokens, "Latest total", thread.usage?.last.totalTokens)
                 metric("Output", thread.usage?.last.outputTokens, "Reasoning output", thread.usage?.last.reasoningOutputTokens)
-                metric("Thread total", thread.usage?.total.totalTokens, "Context window", thread.usage?.modelContextWindow)
+                metric("Thread total", thread.usage?.total.totalTokens, contextMode.label, window)
+                if contextMode == .modelCapacity {
+                    metric("Codex window", thread.usage?.modelContextWindow, "Latest context ≈", thread.usage?.last.totalTokens)
+                }
             }.font(.caption2).monospacedDigit()
             if let usage = thread.usage, !thread.contextIsStale {
                 Text("Estimated context cache: \(count(usage.last.cachedInputTokens)) tokens")

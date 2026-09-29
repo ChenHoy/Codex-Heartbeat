@@ -77,13 +77,19 @@ Both registry commands remove valid stale records and list live registrations wi
 Usage arrives through App Server `thread/tokenUsage/updated` notifications. If it is unavailable, the dashboard says “Waiting for token usage from the next completed turn.” Send a normal prompt in that managed terminal and let it finish while the app is monitoring. Even “Reply only OK” can provide telemetry. Refresh rescans sessions and reads thread summaries; it never generates a model turn to obtain usage, and older usage may not be replayed after reconnect.
 
 ```text
-estimated used fraction = latest turn total tokens / reported context window
+estimated used fraction = latest turn total tokens / selected context basis
 estimated remaining %   = 100 × (1 − estimated used fraction)
 ```
 
 The fraction is clamped to 0–1. Cumulative thread total is displayed separately and never used as context occupancy. Cached input is already part of input usage; it is not added a second time. Context pressure turns orange above 60% used and red above 80%. After compaction, the estimate is marked stale until fresh usage arrives.
 
-A fresh thread can consume several percent before much user text is added: instructions, tool definitions, project guidance, and history contribute to the request. A 95% reading means approximately 5% of the **reported window** was used by the latest request, not that 5% of your subscription allowance is gone. The app does not break down harness overhead or assume a universal window size across models.
+The dashboard defaults to **Model capacity**, using an exact model-ID lookup of published native capacities. The **Context basis** selector switches to **Codex session window**, the effective window reported by the running session, and remembers your choice across launches. Each thread displays its model, read from App Server thread summaries and resume responses; model-setting notifications update it when you switch models. Older servers or unknown/custom models show capacity as unknown rather than guessing. Select Codex session window to use their reported telemetry. This is a display preference and does not change Codex configuration.
+
+The initial catalog, verified against the official model pages on 2026-09-29, covers GPT-6 Astra/Sol/Luna and GPT-5.6 (alias)/Sol/Terra/Luna at 1,050,000 tokens. Sources are recorded alongside the lookup in `Sources/HeartbeatCore/ContextDisplay.swift`. Other model IDs require a verified catalog entry.
+
+Native capacity is not a promise of how much history Codex will retain before compaction. The native view also shows the reported Codex window for comparison. Neither view measures billing, API price thresholds, or subscription allowance. Usage remains a latest-request estimate, not an exact count of retained history.
+
+A fresh thread can consume several percent before much user text is added: instructions, tool definitions, project guidance, and history contribute to the request. A 5% used reading means approximately 5% of the **selected context basis** was used by the latest request. The app does not break down harness overhead. Model changes mark existing estimates stale until fresh usage arrives.
 
 “Estimated context cache” is the latest reported cached-input count. It describes reuse on that request, not tokens guaranteed to remain cached now. A missing cache-write field defaults to zero for protocol compatibility; this is not evidence that no cache write occurred or that cache writes are free.
 

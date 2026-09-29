@@ -57,6 +57,7 @@ public struct ThreadSummary: Decodable {
     public struct Status: Decodable { public let type: String }
     public let id: String
     public let name: String?
+    public let model: String?
     public let cwd: String
     public let status: Status
     public let updatedAt: Int64

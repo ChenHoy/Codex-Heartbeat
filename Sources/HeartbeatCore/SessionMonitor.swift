@@ -4,6 +4,7 @@ import Combine
 public struct MonitoredThread: Identifiable {
     public let id: String
     public var name: String?
+    public var model: String? = nil
     public var cwd: String
     public var status: SessionStatus
     public var usage: ThreadUsage?
@@ -111,7 +112,10 @@ public struct MonitoredThread: Identifiable {
             if !attached.contains(id) {
                 // Rejoin only threads reported as loaded. No model turn, config overrides,
                 // new thread or history hydration is requested. CLI remains the interactive client.
-                _ = try await rpc.request("thread/resume", params: ["threadId": id, "excludeTurns": true])
+                let resumed = try await rpc.request("thread/resume", params: ["threadId": id, "excludeTurns": true])
+                if let model = resumed["model"] as? String, let index = threads.firstIndex(where: { $0.id == id }) {
+                    updateModel(index, model: model)
+                }
                 attached.insert(id)
                 connectionMessage = "Connected"
             }
@@ -130,14 +134,19 @@ public struct MonitoredThread: Identifiable {
     private func upsert(_ summary: ThreadSummary) {
         if let index = threads.firstIndex(where: { $0.id == summary.id }) {
             threads[index].name = summary.name; threads[index].cwd = summary.cwd
+            if let model = summary.model { updateModel(index, model: model) }
             updateStatus(index, summary.sessionStatus)
             // A heartbeat updates this server timestamp too. Turn events,
             // rather than updatedAt, identify actual user activity.
         } else {
-            threads.append(MonitoredThread(id: summary.id, name: summary.name, cwd: summary.cwd,
+            threads.append(MonitoredThread(id: summary.id, name: summary.name, model: summary.model, cwd: summary.cwd,
                                           status: summary.sessionStatus,
                                           lastActivity: Date(timeIntervalSince1970: Double(summary.updatedAt))))
         }
+    }
+    private func updateModel(_ index: Int, model: String) {
+        if threads[index].model != model, threads[index].usage != nil { threads[index].contextIsStale = true }
+        threads[index].model = model
     }
     private func updateStatus(_ index: Int, _ status: SessionStatus) {
         let old = threads[index].status
@@ -235,6 +244,10 @@ public struct MonitoredThread: Identifiable {
             return
         }
         switch method {
+        case "thread/settings/updated":
+            if let settings = params["threadSettings"] as? [String: Any], let model = settings["model"] as? String {
+                updateModel(index, model: model)
+            }
         case "thread/tokenUsage/updated":
             guard let notification = decode(UsageNotification.self, params) else {
                 threads[index].schedule.stop("Invalid telemetry")

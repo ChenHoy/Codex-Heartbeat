@@ -105,3 +105,10 @@ Remaining visual acceptance limitation: attempts to inspect the packaged menu-on
 ## User confirmation after the visibility fix
 
 The user confirmed that the packaged app displays the managed session and later reports approximately 95% context remaining after dummy prompts. Direct packaged countdown interaction and elapsed heartbeat delivery remain unverified.
+
+## Context display modes — 2026-09-29
+
+- Full suite with `HEARTBEAT_INTEGRATION=1 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --scratch-path .build-xcode`: 30 tests passed, zero failures or skips. No live model turn enabled.
+- Verified native and reported-window calculations, unknown model handling, clamping, per-thread model changes, and stale usage invalidation.
+- Dashboard layout exercised both persisted display modes in light/dark themes with 0, 1, and 4 sessions; inspected generated screenshots for both modes.
+- Release app and launcher rebuilt and signed via `scripts/build-app.sh`; `git diff --check` passed.

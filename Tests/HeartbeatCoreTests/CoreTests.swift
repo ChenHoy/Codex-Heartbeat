@@ -24,6 +24,21 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(try usage(1200).fractionUsed, 1)
         XCTAssertEqual(try usage(0).percentRemaining, 100)
     }
+    func testContextDisplayBasesAndUnknownModels() throws {
+        let value = try usage(100_000, window: "258400")
+        XCTAssertEqual(ContextDisplayMode.modelCapacity.window(model: "gpt-6-sol", usage: value), 1_050_000)
+        XCTAssertEqual(ContextDisplayMode.modelCapacity.fractionUsed(model: "gpt-6-sol", usage: value)!, 100_000.0 / 1_050_000, accuracy: 0.000001)
+        XCTAssertEqual(ContextDisplayMode.sessionWindow.fractionUsed(model: "gpt-6-sol", usage: value), value.fractionUsed)
+        for model in [nil, "custom", "gpt-6-sol-future"] as [String?] {
+            XCTAssertNil(ContextDisplayMode.modelCapacity.fractionUsed(model: model, usage: value))
+            XCTAssertEqual(ContextDisplayMode.sessionWindow.window(model: model, usage: value), 258400)
+        }
+        XCTAssertNil(ContextDisplayMode.modelCapacity.fractionUsed(model: "gpt-6-sol", usage: nil))
+        XCTAssertEqual(ContextDisplayMode.modelCapacity.fractionUsed(model: "gpt-6-sol", usage: try usage(2_000_000)), 1)
+        for model in ["gpt-6-astra", "gpt-6-luna", "gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
+            XCTAssertEqual(ModelContextCatalog.capacity(for: model), 1_050_000)
+        }
+    }
     func testThresholdBoundaries() throws {
         XCTAssertEqual(try usage(600).pressure, .normal)
         XCTAssertEqual(try usage(601).pressure, .orange)
