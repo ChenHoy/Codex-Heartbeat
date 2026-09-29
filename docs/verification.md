@@ -1,6 +1,6 @@
 # Verification record — 2026-09-23
 
-Created a new project at `/Users/chen/code/CodexHeartbeat` after the existing scaffold could not be located and the user explicitly authorized starting a new project through Spokenly. No unrelated project files were changed. No global Xcode selection or Codex settings were changed.
+Created a new project at `/path/to/CodexHeartbeat` after the existing scaffold could not be located and the user explicitly authorized starting a new project through Spokenly. No unrelated project files were changed. No global Xcode selection or Codex settings were changed.
 
 ## Git and CLI compatibility update
 
@@ -100,3 +100,8 @@ Verification completed with the Xcode toolchain:
 - A packaged managed CLI test received `OK.` for the dummy prompt. The initial smoke command mistakenly put `--no-alt-screen` after the CLI separator, causing it to become an initial prompt; that turn was interrupted before submitting the intended dummy prompt. A separate no-prompt managed session exited with `/quit` (exit 0); `--list` afterward contained only the unrelated pre-existing GamesRLProject session.
 
 Remaining visual acceptance limitation: attempts to inspect the packaged menu-only app by path and bundle ID repeatedly returned computer-use timeout -10005. The app was opened via Launch Services. A Spokenly request for the user to inspect its session card and enable Keep Warm was skipped. Therefore the actual packaged popover and its displayed countdown have not been visually accepted; hosted-view visual QA and production scheduling checks passed, but do not establish that final menu-popover acceptance. No 25-minute wall-clock pulse was awaited.
+
+
+## User confirmation after the visibility fix
+
+The user confirmed that the packaged app displays the managed session and later reports approximately 95% context remaining after dummy prompts. Direct packaged countdown interaction and elapsed heartbeat delivery remain unverified.

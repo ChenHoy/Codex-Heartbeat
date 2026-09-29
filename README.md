@@ -12,17 +12,15 @@ Codex Heartbeat puts your managed Codex sessions in the macOS menu bar: see acti
 
 ## A look at the menu
 
-<p align="center">
-  <img src="docs/images/dashboard-example.png" alt="Codex Heartbeat menu showing an idle thread, approximately 95% context remaining, token and cache figures, and the Keep Warm toggle" width="400">
-</p>
+![Example Codex Heartbeat dashboard](docs/images/dashboard-example.png)
 
 *Actual SwiftUI view rendered with example data, in dark mode. The test session is disconnected, so it shows Reconnect. Light mode is also supported.*
 
 | Menu-bar heart | Meaning |
 | :---: | --- |
-| ![Empty heart](docs/images/heart-empty.svg) **♡** | Monitoring; no Keep Warm schedule enabled |
-| ![Full heart](docs/images/heart-full.svg) **♥** | At least one Keep Warm schedule enabled |
-| ![Slashed heart](docs/images/heart-warning.svg) | A connection, thread, or heartbeat warning needs attention |
+| **♡** | Monitoring; no Keep Warm schedule enabled |
+| **♥** | At least one Keep Warm schedule enabled |
+| **♥̸ ⚠** | A connection, thread, or heartbeat warning needs attention |
 
 Each session shows its directory, thread activity, latest token counts, cached input, and context estimate. Additional cards scroll. **Idle** means no turn is currently running; it says nothing about cache residency.
 
@@ -83,18 +81,34 @@ Heartbeats use the existing thread and its configuration. The instruction to avo
 
 A tiny heartbeat prompt still sends the thread’s context. It is worthwhile only when the extra cache reuse outweighs the heartbeat turns themselves. Stable, substantial context and a predictable return to the same thread make the idea more plausible; an already durable cache or an uncertain return makes it less attractive. Matching prefixes, routing, and retention determine actual reuse. [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)
 
-### Example: 100,000 tokens, two heartbeats, one return
+### Example: one million tokens, two heartbeats, one return
 
-*Illustrative API economics—not a measured saving or a ChatGPT allowance estimate. Assume $2.50 per million tokens for cold cache writes and $0.20 for cached reads, with both heartbeats hitting the cache. Small suffixes and output costs are omitted.*
+**Hypothetical rates per 1,000,000 tokens:** a cold cache write costs **$2.50**; a cached read costs **$0.20**. Since the example context is exactly one million tokens, those are also the costs of processing it once—no token-unit conversion needed.
 
-| | Let the cache go cold | ♥ Keep it warm |
+Assume both heartbeats reuse the entire prefix and keep it available for your return. Compare that with a return after the cache has expired:
+
+| Context processing | Cache expires; no heartbeats | ♥ Two successful heartbeats |
 | --- | ---: | ---: |
-| Two heartbeat reads | — | $0.04 |
-| Process context when you return | $0.25 | $0.02 |
-| **Total** | **$0.25** | **$0.06** |
-| **Potential saving** | | **$0.19 · 76%** |
+| Heartbeat 1 | $0.00 | $0.20 |
+| Heartbeat 2 | $0.00 | $0.20 |
+| Your return request | $2.50 cold write | $0.20 cached read |
+| **Total** | **$2.50** | **$0.60** |
+| **Potential saving** | | **$1.90 · 76%** |
 
-If the cache would have survived anyway, doing nothing costs **$0.02** and heartbeats raise that to **$0.06**. In this simplified example, heartbeats must improve the chance of a cache hit by more than **17.4 percentage points** to break even. Real suffix, output, reasoning, and missed-cache costs raise the bar. Substitute your model’s applicable [API rates](https://developers.openai.com/api/docs/pricing).
+**The tradeoff:** if the cache would survive without help, your return costs only **$0.20**. Heartbeats instead make the total **$0.60**, adding **$0.40** for no benefit.
+
+The arithmetic is:
+
+```text
+Successful preservation: $2.50 − (3 × $0.20) = $1.90 saved
+Heartbeat overhead:      2 × $0.20          = $0.40
+Avoided cold-return cost: $2.50 − $0.20      = $2.30
+Break-even improvement:  $0.40 / $2.30      ≈ 17.4 percentage points
+```
+
+That break-even assumes $0.40 of heartbeat costs: they must increase the probability of a cached return by more than 17.4 percentage points. Heartbeat cache misses and new input, output, or reasoning costs raise the threshold.
+
+*This is a simplified API illustration, not measured savings, current model pricing, or a claim that your session supports a million-token window. It excludes the initial cache creation, which both routes already paid for. Actual rates—including any long-context tier—depend on your model; see [API pricing](https://developers.openai.com/api/docs/pricing).*
 
 **For ChatGPT-backed Codex, every heartbeat uses allowance.** The app cannot translate cached-token counts into subscription savings, set backend retention, or promise to prevent a cache rewrite. There has been no controlled savings benchmark for this project.
 
